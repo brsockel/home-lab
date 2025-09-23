@@ -1,0 +1,10 @@
+[infrastructure]
+iac-tools
+
+[kubernetes]
+k8s-controller-1
+k8s-controller-2
+k8s-controller-3
+k8s-worker-1
+k8s-worker-2
+k8s-worker-3
