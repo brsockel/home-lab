@@ -8,3 +8,8 @@ k8s-controller-3
 k8s-worker-1
 k8s-worker-2
 k8s-worker-3
+
+[proxmox]
+pve-01
+pve-02
+pve-03
