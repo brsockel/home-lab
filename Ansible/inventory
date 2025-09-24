@@ -1,6 +1,9 @@
 [infrastructure]
 iac-tools
 
+[infra-terraform]
+iac-tools
+
 [kubernetes]
 k8s-controller-1
 k8s-controller-2
