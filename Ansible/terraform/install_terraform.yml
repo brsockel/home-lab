@@ -1,0 +1,35 @@
+---
+- name: Install Terraform
+  hosts: infra-terraform
+  become: yes
+  tasks:
+
+    - name: Install dependencies (Ubuntu/Debian)
+      apt:
+        name: unzip
+        state: present
+      when: ansible_os_family == "Debian"
+
+    - name: Install dependencies (RHEL/CentOS)
+      yum:
+        name: unzip
+        state: present
+      when: ansible_os_family == "RedHat"
+
+    - name: Download Terraform
+      get_url: 
+        url: https://releases.hashicorp.com/terraform/1.13.3/terraform_1.13.3_linux_amd64.zip
+        dest: /tmp/terraform.zip
+
+    - name: Unzip Terraform
+      unarcvhive:
+        src: /tmp/terraform.zip
+        dest: /usr/local/bin/
+        remote_src: yes
+
+    - name: Verify Terraform Installation
+      command: terraform version
+      register: terraform_version
+
+    - name: Show Terraform Version
+      debug:
