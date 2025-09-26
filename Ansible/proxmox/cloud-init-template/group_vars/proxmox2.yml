@@ -1,0 +1,6 @@
+# Use token auth (recommended) or set api_user/api_password
+proxmox_api_user: "::add-mask::API User"
+# Either set token values OR api_password
+proxmox_api_token_id: "::add-mask::TokenAPI"            # e.g. terraform@pam!tokenname  (optional)
+proxmox_api_token_secret: "::add-mask::Token"        # secret (optional)
+proxmox_api_password: "::add-mask::password"            # fallback if not using token (not recommended)
