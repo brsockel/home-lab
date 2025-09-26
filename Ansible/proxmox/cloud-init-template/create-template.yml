@@ -1,0 +1,144 @@
+---
+- name: Build cloud-init template (offline customize -> upload -> import -> template)
+  hosts: localhost
+  gather_facts: no
+  vars_files:
+    - group_vars/all.yml
+    - group_vars/proxmox.yml
+
+  vars:
+    proxmox_upload_path: "/tmp/{{ local_image | basename }}"
+    vmid: "{{ template_vmid }}"
+    vm_name: "{{ template_name }}"
+
+  tasks:
+    - name: Ensure virt-customize exists (optional; we use it to install qemu-guest-agent)
+      ansible.builtin.command: which virt-customize
+      register: virt_custom_check
+      ignore_errors: yes
+
+    - name: Fail if virt-customize missing (you can skip offline customise by setting install_guest_agent: false)
+      ansible.builtin.fail:
+        msg: "virt-customize not found on controller. Install libguestfs-tools or set install_guest_agent: false and use direct-download method."
+      when: virt_custom_check.rc != 0
+
+    - name: Download cloud image to controller
+      ansible.builtin.get_url:
+        url: "{{ image_url }}"
+        dest: "{{ local_image }}"
+        mode: '0644'
+        timeout: 600
+
+    - name: (Optional) Install qemu-guest-agent and cloud-init into the image (offline)
+      ansible.builtin.command: >
+        virt-customize -a {{ local_image }}
+          --install qemu-guest-agent,cloud-init
+      register: vc_install
+      changed_when: "'Installed' in vc_install.stdout or vc_install.rc == 0"
+
+    - name: Copy modified image to Proxmox host (upload)
+      ansible.builtin.copy:
+        src: "{{ local_image }}"
+        dest: "{{ proxmox_upload_path }}"
+        mode: '0644'
+      delegate_to: "{{ groups['proxmox'][0] }}"
+      become: yes
+
+- name: Create VM on Proxmox, import disk, set cloud-init and convert to template
+  hosts: "{{ groups['proxmox'][0] }}"
+  gather_facts: no
+  become: yes
+  vars_files:
+    - group_vars/all.yml
+  vars:
+    vmid: "{{ template_vmid }}"
+    vm_name: "{{ template_name }}"
+    image_on_proxmox: "{{ proxmox_upload_path }}"
+
+  tasks:
+    - name: Create a VM container in Proxmox (no disk yet)
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        # use token if provided
+        api_token_id: "{{ proxmox_api_token_id | default(omit) }}"
+        api_token_secret: "{{ proxmox_api_token_secret | default(omit) }}"
+        api_password: "{{ proxmox_api_password | default(omit) }}"
+        name: "{{ vm_name }}"
+        vmid: "{{ vmid }}"
+        node: "{{ proxmox_node }}"
+        memory: 2048
+        cores: 2
+        scsihw: virtio-scsi-pci
+        agent: 1
+        net:
+          net0: "virtio,bridge=vmbr0"
+        state: present
+
+    - name: Import disk image into Proxmox storage (runs on proxmox node)
+      ansible.builtin.shell: |
+        qm importdisk {{ vmid }} {{ image_on_proxmox }} {{ proxmox_storage }}
+      args:
+        warn: false
+
+    - name: Attach imported disk as scsi0
+      ansible.builtin.shell: |
+        # importdisk usually creates vm-<vmid>-disk-0; attach as scsi0
+        qm set {{ vmid }} --scsi0 {{ proxmox_storage }}:vm-{{ vmid }}-disk-0
+      args:
+        warn: false
+
+    - name: Add cloud-init virtual CD (ide2) and set cloud-init defaults
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id | default(omit) }}"
+        api_token_secret: "{{ proxmox_api_token_secret | default(omit) }}"
+        api_password: "{{ proxmox_api_password | default(omit) }}"
+        name: "{{ vm_name }}"
+        node: "{{ proxmox_node }}"
+        # attach built-in cloudinit device on storage (Proxmox will create metadata ISO)
+        ide:
+          ide2: "{{ proxmox_storage }}:cloudinit,format=qcow2"
+        ciuser: "ubuntu"
+        sshkeys: "{{ lookup('file', '~/.ssh/bryan.pub') | default(omit) }}"
+        nameservers: ["192.168.1.1","8.8.8.8"]
+        ipconfig0: "ip=dhcp"
+        net:
+          net0: "virtio,bridge=vmbr0"
+        update: yes
+
+    - name: Set boot order, serial and vga (console)
+      ansible.builtin.shell: |
+        qm set {{ vmid }} --boot order=scsi0
+        qm set {{ vmid }} --serial0 socket --vga serial0
+      args:
+        warn: false
+
+    - name: (Optional) Start the VM briefly to check it boots (skip if you used virt-customize)
+      ansible.builtin.shell: |
+        qm start {{ vmid }} || true
+        sleep 8
+        qm shutdown {{ vmid }} || true
+      args:
+        warn: false
+      register: start_result
+      failed_when: false
+
+    - name: Convert VM to template
+      community.proxmox.proxmox_kvm:
+        api_host: "{{ proxmox_api_host }}"
+        api_user: "{{ proxmox_api_user }}"
+        api_token_id: "{{ proxmox_api_token_id | default(omit) }}"
+        api_token_secret: "{{ proxmox_api_token_secret | default(omit) }}"
+        api_password: "{{ proxmox_api_password | default(omit) }}"
+        name: "{{ vm_name }}"
+        node: "{{ proxmox_node }}"
+        state: template
+        force: true
+
+    - name: Clean up uploaded image file
+      ansible.builtin.file:
+        path: "{{ image_on_proxmox }}"
+        state: absent
+

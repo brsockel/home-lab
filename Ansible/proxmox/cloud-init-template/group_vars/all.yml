@@ -1,0 +1,10 @@
+proxmox_api_host: pve-02
+# Use token auth (recommended) or set api_user/api_password
+# Either set token values OR api_password
+proxmox_storage: nfs-vm
+proxmox_node: pve-02
+template_vmid: 9000
+template_name: ubuntu-cloud-template
+image_url: "https://cloud-images.ubuntu.com/jammy/current/jammy-server-cloudimg-amd64.img"
+local_image: "/tmp/jammy-server-cloudimg-amd64.img"
+
